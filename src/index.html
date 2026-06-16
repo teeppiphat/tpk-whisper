@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>tpk-whisper — Settings</title>
+    <style>
+      :root { color-scheme: light dark; font-family: -apple-system, system-ui, sans-serif; }
+      body { margin: 0; padding: 20px; }
+      h1 { font-size: 15px; margin: 0 0 16px; font-weight: 600; }
+      label { display: block; font-size: 12px; opacity: .8; margin: 12px 0 4px; }
+      input { width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 8px;
+              border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+              background: transparent; color: inherit; font-size: 13px; }
+      .hint { font-size: 11px; opacity: .6; margin-top: 4px; }
+      .row { margin-top: 18px; display: flex; gap: 8px; align-items: center; }
+      .hkrow { display: flex; gap: 8px; align-items: stretch; }
+      .hkrow input { flex: 1; }
+      button { padding: 8px 14px; border-radius: 8px; border: none; font-size: 13px; cursor: pointer;
+               background: #2f6df6; color: #fff; white-space: nowrap; }
+      button.secondary { background: color-mix(in srgb, currentColor 12%, transparent); color: inherit; }
+      button:active { opacity: .85; }
+      button.capturing { background: #e0533d; color: #fff; }
+      #status { font-size: 12px; min-height: 16px; opacity: .85; }
+    </style>
+  </head>
+  <body>
+    <h1>tpk-whisper</h1>
+
+    <label for="apiKey">Typhoon API key</label>
+    <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
+    <div class="hint">Get one free at playground.opentyphoon.ai</div>
+
+    <label for="hotkey">Dictation hotkey (push-to-talk)</label>
+    <div class="hkrow">
+      <input id="hotkey" type="text" placeholder="Control+Alt+KeyD" readonly />
+      <button id="capture" class="secondary" type="button">Record</button>
+    </div>
+    <div class="hint">Click <b>Record</b> then press your key combo. Hold this hotkey to record your voice, release to transcribe.</div>
+
+    <div class="row">
+      <button id="save">Save</button>
+      <span id="status"></span>
+    </div>
+
+    <script>
+      const { invoke } = window.__TAURI__.core;
+      const { listen } = window.__TAURI__.event;
+      const $ = (id) => document.getElementById(id);
+
+      async function load() {
+        const cfg = await invoke("get_config");
+        $("apiKey").value = cfg.api_key || "";
+        $("hotkey").value = cfg.hotkey || "Control+Alt+KeyD";
+      }
+
+      // ---- Hotkey capture ----------------------------------------------
+      // Build a Tauri global-shortcut string from a keydown event.
+      // Tauri uses KeyboardEvent.code names (KeyD, Digit1, Space, ...) and
+      // modifiers Control / Alt / Shift / Super (⌘ on macOS).
+      const MODIFIER_CODES = new Set([
+        "ControlLeft","ControlRight","AltLeft","AltRight",
+        "ShiftLeft","ShiftRight","MetaLeft","MetaRight",
+      ]);
+
+      function toShortcut(e) {
+        if (MODIFIER_CODES.has(e.code)) return null; // wait for a real key
+        const mods = [];
+        if (e.ctrlKey) mods.push("Control");
+        if (e.altKey) mods.push("Alt");
+        if (e.shiftKey) mods.push("Shift");
+        if (e.metaKey) mods.push("Super");
+        if (mods.length === 0) return null; // require at least one modifier
+        return [...mods, e.code].join("+");
+      }
+
+      const captureBtn = $("capture");
+      let capturing = false;
+
+      function stopCapture() {
+        capturing = false;
+        captureBtn.textContent = "Record";
+        captureBtn.classList.remove("capturing");
+        window.removeEventListener("keydown", onCaptureKey, true);
+      }
+
+      function onCaptureKey(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.code === "Escape") { stopCapture(); return; }
+        const combo = toShortcut(e);
+        if (combo) {
+          $("hotkey").value = combo;
+          stopCapture();
+          $("status").textContent = "Hotkey set — click Save to apply.";
+        }
+      }
+
+      captureBtn.addEventListener("click", () => {
+        if (capturing) { stopCapture(); return; }
+        capturing = true;
+        captureBtn.textContent = "Press keys…";
+        captureBtn.classList.add("capturing");
+        $("status").textContent = "Hold modifier(s) + a key. Esc to cancel.";
+        window.addEventListener("keydown", onCaptureKey, true);
+      });
+
+      $("save").addEventListener("click", async () => {
+        $("status").textContent = "Saving…";
+        try {
+          await invoke("save_config", {
+            apiKey: $("apiKey").value,
+            hotkey: $("hotkey").value,
+          });
+          $("status").textContent = "Saved ✓";
+        } catch (e) {
+          $("status").textContent = String(e);
+        }
+      });
+
+      listen("status", (e) => { $("status").textContent = e.payload; });
+      load();
+    </script>
+  </body>
+</html>
