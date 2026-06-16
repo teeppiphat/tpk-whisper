@@ -48,6 +48,21 @@ impl Recorder {
     }
 }
 
+/// Delete any leftover tpk-whisper WAVs in the temp dir (e.g. from a previous
+/// crash). Safe to call at startup — nothing is in use then.
+pub fn cleanup_leftovers() {
+    let dir = std::env::temp_dir();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("tpk-whisper-") && name.ends_with(".wav") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
 fn record_loop(stop: Arc<AtomicBool>) -> anyhow::Result<PathBuf> {
     let host = cpal::default_host();
     let device = host
@@ -119,8 +134,14 @@ fn record_loop(stop: Arc<AtomicBool>) -> anyhow::Result<PathBuf> {
     }
     drop(stream); // stop capture
 
+    // Unique filename per recording so back-to-back captures never collide
+    // (a previous transcription thread may still be cleaning up its own file).
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     let mut path = std::env::temp_dir();
-    path.push(format!("tpk-whisper-{}.wav", std::process::id()));
+    path.push(format!("tpk-whisper-{}-{}.wav", std::process::id(), stamp));
 
     let spec = hound::WavSpec {
         channels: 1,

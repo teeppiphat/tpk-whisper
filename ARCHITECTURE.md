@@ -57,7 +57,7 @@ Recording is **push-to-talk**: hold the hotkey to record, release to transcribe.
 |------------------|----------------|
 | `lib.rs`         | App setup, tray, global hotkey registration, state, Tauri commands |
 | `audio.rs`       | `Recorder`: start/stop mic capture on a dedicated thread → mono 16-bit WAV |
-| `transcribe.rs`  | POST WAV to Typhoon, parse `{ text }` |
+| `transcribe.rs`  | `transcribe` (POST WAV to Typhoon) + `transcribe_local` (subprocess to bundled Python) |
 | `paste.rs`       | Set clipboard + simulate ⌘V |
 | `ratelimit.rs`   | Sliding-window guard, ≤100 requests/minute |
 | `config.rs`      | Load/save `~/Library/Application Support/ai.bedrock.tpkwhisper/config.json` (API key, hotkey) |
@@ -81,6 +81,26 @@ converted to **16-bit PCM** to keep files small (Typhoon accepts `.wav`).
 - **Input Monitoring** — may be requested for global key capture.
 
 These are OS-level grants; the app guides the user to System Settings on first run.
+
+## Backends: API vs Local
+
+A `backend` config field selects how audio is transcribed:
+
+- **`local`** (default) — run `typhoon-asr-realtime` on this machine. The app embeds a tiny
+  `local_transcribe.py` (via `include_str!`), writes it next to the config, and
+  runs `<launcher> local_transcribe.py <wav> --model … --device …` as a subprocess,
+  parsing the `{ "text": … }` JSON line it prints. The launcher field is split on
+  whitespace, so it accepts a bare interpreter (`python3`, `.venv/bin/python`) or a
+  full command like `uv run --with typhoon-asr python`. No API key, no network
+  (after the one-time HuggingFace model download), no rate limit. The default
+  launcher is `uv run --python 3.10 --with typhoon-asr python`, and the child
+  process is given an augmented PATH (`~/.local/bin`, `~/.cargo/bin`,
+  `/opt/homebrew/bin`, …) so it works even when the app is launched from Finder.
+- **`api`** — POST the WAV to Typhoon's OpenAI-compatible endpoint. Requires an
+  API key and obeys the 100/min rate limit.
+
+Both paths converge on the same clipboard+paste step, so the rest of the app is
+backend-agnostic.
 
 ## Rate limiting
 
